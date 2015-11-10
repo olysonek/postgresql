@@ -310,9 +310,7 @@ function run_change_password_test() {
   assert_login_access 'postgres' "NEW_${admin_password}" true
   assert_login_access 'postgres' ${admin_password} false
 
-  # need to remove volume_dir with sudo because of permissions of files written
-  # by the Docker container
-  sudo rm -rf ${volume_dir}
+  rm -rf ${volume_dir}
 
   echo "  Success!"
 }
