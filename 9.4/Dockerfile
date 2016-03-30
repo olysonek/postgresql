@@ -26,19 +26,19 @@ EXPOSE 5432
 # This image must forever use UID 26 for postgres user so our volumes are
 # safe in the future. This should *never* change, the last test is there
 # to make sure of that.
-RUN rpmkeys --import file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7 && \
-    yum -y --setopt=tsflags=nodocs install https://www.softwarecollections.org/en/scls/rhscl/rh-postgresql94/epel-7-x86_64/download/rhscl-rh-postgresql94-epel-7-x86_64.noarch.rpm && \
-    yum -y --setopt=tsflags=nodocs --enablerepo=centosplus install gettext bind-utils rh-postgresql94 epel-release && \
-    yum -y --setopt=tsflags=nodocs install nss_wrapper && \
+RUN yum install -y centos-release-scl epel-release && \
+    INSTALL_PKGS="rsync tar gettext bind-utils rh-postgresql94 rh-postgresql94-postgresql-contrib nss_wrapper" && \
+    yum -y --setopt=tsflags=nodocs install $INSTALL_PKGS && \
+    rpm -V $INSTALL_PKGS && \
     yum clean all && \
     localedef -f UTF-8 -i en_US en_US.UTF-8 && \
-    mkdir -p /var/lib/pgsql/data && chown postgres.postgres /var/lib/pgsql/data && \
-    test "$(id postgres)" = "uid=26(postgres) gid=26(postgres) groups=26(postgres)" && \
-    # Loosen permission bits to avoid problems running container with arbitrary UID
-    chmod -R a+rwx /var/run/postgresql
+    mkdir -p /var/lib/pgsql/data && \
+    test "$(id postgres)" = "uid=26(postgres) gid=26(postgres) groups=26(postgres)"
 
 # Loosen permission bits to avoid problems running container with arbitrary UID
-RUN chmod -R a+rwx /var/lib/pgsql
+ADD root /
+RUN /usr/libexec/fix-permissions /var/lib/pgsql && \
+    /usr/libexec/fix-permissions /var/run/postgresql
 
 # Get prefix path and path to scripts rather than hard-code them in scripts
 ENV CONTAINER_SCRIPTS_PATH=/usr/share/container-scripts/postgresql \
@@ -50,8 +50,6 @@ ENV CONTAINER_SCRIPTS_PATH=/usr/share/container-scripts/postgresql \
 ENV BASH_ENV=${CONTAINER_SCRIPTS_PATH}/scl_enable \
     ENV=${CONTAINER_SCRIPTS_PATH}/scl_enable \
     PROMPT_COMMAND=". ${CONTAINER_SCRIPTS_PATH}/scl_enable"
-
-ADD root /
 
 VOLUME ["/var/lib/pgsql/data"]
 

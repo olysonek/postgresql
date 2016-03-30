@@ -10,8 +10,13 @@ postinitdb_actions=
 psql_identifier_regex='^[a-zA-Z_][a-zA-Z0-9_]*$'
 psql_password_regex='^[a-zA-Z0-9_~!@#$%^&*()-=<>,.?;:|]+$'
 
+# match . files when moving userdata below
+shopt -s dotglob
+# extglob enables the !(userdata) glob pattern below.
+shopt -s extglob
+
 function usage() {
-  if [ $# == 2 ]; then
+  if [ $# == 1 ]; then
     echo >&2 "error: $1"
   fi
   echo >&2 "You must either specify the following environment variables:"
@@ -80,11 +85,18 @@ function generate_postgresql_config() {
       > "${POSTGRESQL_CONFIG_FILE}"
 }
 
+function generate_postgresql_recovery_config() {
+  envsubst \
+      < "${CONTAINER_SCRIPTS_PATH}/openshift-custom-recovery.conf.template" \
+      > "${POSTGRESQL_RECOVERY_FILE}"
+}
+
 # Generate passwd file based on current uid
 function generate_passwd_file() {
   export USER_ID=$(id -u)
   export GROUP_ID=$(id -g)
-  envsubst < "${CONTAINER_SCRIPTS_PATH}/passwd.template" > "${HOME}/passwd"
+  grep -v ^postgres /etc/passwd > "$HOME/passwd"
+  echo "postgres:x:${USER_ID}:${GROUP_ID}:PostgreSQL Server:${HOME}:/bin/bash" >> "$HOME/passwd"
   export LD_PRELOAD=libnss_wrapper.so
   export NSS_WRAPPER_PASSWD=${HOME}/passwd
   export NSS_WRAPPER_GROUP=/etc/group
@@ -158,19 +170,32 @@ function set_passwords() {
 
 function set_pgdata ()
 {
-  # TODO:  Remove this.
-  # Container should not choose different PGDATA location based on the way how
-  # data directory is "mounted";  mount permissions might change among different
-  # 'docker run' invocations (openshift/postgresql/issues/76).
-
-  if [ -O "${HOME}/data" ]; then
-    export PGDATA=$HOME/data
-  else
-    # If current user does not own data directory
-    # create a subdirectory that the user does own
-    if [ ! -d "${HOME}/data/userdata" ]; then
-      mkdir "${HOME}/data/userdata"
-    fi
-    export PGDATA=$HOME/data/userdata
+  # backwards compatibility case, we used to put the data here,
+  # move it into our new expected location (userdata)
+  if [ -e ${HOME}/data/PG_VERSION ]; then
+    mkdir -p "${HOME}/data/userdata"
+    pushd "${HOME}/data"
+    # move everything except the userdata directory itself, into the userdata directory.
+    mv !(userdata) "userdata"
+    popd
+  else 
+    # create a subdirectory that the user owns
+    mkdir -p "${HOME}/data/userdata"
   fi
+  export PGDATA=$HOME/data/userdata
+  # ensure sane perms for postgresql startup
+  chmod 700 "$PGDATA"
+}
+
+function wait_for_postgresql_master() {
+  while true; do
+    master_fqdn=$(postgresql_master_addr)
+    echo "Waiting for PostgreSQL master (${master_fqdn}) to accept connections ..."
+    if [ -v POSTGRESQL_ADMIN_PASSWORD ]; then
+      PGPASSWORD=${POSTGRESQL_ADMIN_PASSWORD} psql "postgresql://postgres@${master_fqdn}" -c "SELECT 1;" && return 0
+    else
+      PGPASSWORD=${POSTGRESQL_PASSWORD} psql "postgresql://${POSTGRESQL_USER}@${master_fqdn}/${POSTGRESQL_DATABASE}" -c "SELECT 1;" && return 0
+    fi
+    sleep 1
+  done
 }
